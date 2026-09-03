@@ -1,0 +1,41 @@
+name: Flyer intelligence pipeline
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */6 * * *"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: flyer-catalog-pages
+  cancel-in-progress: true
+
+jobs:
+  extract-validate-publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-ita
+      - run: pip install --disable-pip-version-check pillow==11.3.0
+      - name: Extract and validate current Infernetto catalog
+        run: python tools/catalog_pipeline.py --output public/catalog/latest-effegros.json
+      - name: Validate manifest contract
+        run: python -m json.tool public/catalog/latest-effegros.json > /dev/null
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+      - id: deployment
+        uses: actions/deploy-pages@v4
