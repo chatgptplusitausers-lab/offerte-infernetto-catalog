@@ -40,6 +40,12 @@ def collect(output, previous=None):
                     cached=json.loads(get(previous.rstrip('/')+'/latest-'+slug+'.json'))
                     if cached.get('market')==market and cached.get('schemaVersion')==2 and cached.get('pages'):
                         data=cached;status='cached'
+                        # The store can remove its landing-page link before the
+                        # printed expiry date. Recover text from the exact saved
+                        # pages, retaining the original dates and cached status.
+                        if market=='Effe Gros' and not data.get('products'):
+                            from effe_ocr import enrich
+                            data=enrich(data)
                 except (OSError,ValueError):pass
         record={'status':status,'checkedAt':stamp,'error':error}
         if data:
