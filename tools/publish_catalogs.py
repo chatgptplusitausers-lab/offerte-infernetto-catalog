@@ -12,8 +12,19 @@ def collect(output, previous=None):
     successful=0; warnings=[]
     def load(item):
         market,(slug,fn)=item
-        try:return market,slug,fn(),None
-        except (OSError,ValueError) as e:return market,slug,None,str(e)
+        try:
+            data=fn()
+            if market=='Effe Gros':
+                from effe_ocr import enrich, VERSION
+                cached=None
+                if previous:
+                    try:cached=json.loads(get(previous.rstrip('/')+'/latest-'+slug+'.json'))
+                    except (OSError,ValueError):pass
+                if cached and cached.get('id')==data['id'] and cached.get('ocrVersion')==VERSION and cached.get('products'):
+                    for field in ['products','offerCount','ocrVersion','ocrPages']:data[field]=cached.get(field)
+                else:data=enrich(data)
+            return market,slug,data,None
+        except Exception as e:return market,slug,None,str(e)
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
         results=list(ex.map(load,MARKETS.items()))
     for market,slug,data,error in results:
