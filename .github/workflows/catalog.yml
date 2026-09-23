@@ -40,10 +40,10 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: work/ocr-cache
-          key: flyer-ocr-${{ hashFiles('tools/effe_ocr.py') }}-${{ github.run_id }}
-          restore-keys: flyer-ocr-${{ hashFiles('tools/effe_ocr.py') }}-
+          key: flyer-ocr-${{ hashFiles('tools/effe_ocr.py', 'tools/effe_layouts.py') }}-${{ github.run_id }}
+          restore-keys: flyer-ocr-${{ hashFiles('tools/effe_ocr.py', 'tools/effe_layouts.py') }}-
       - name: Test date parsing, edition selection and failure isolation
-        run: python -m unittest discover -s tests -p 'test_sources.py'
+        run: python -m unittest discover -s tests -p 'test_*.py'
       - name: Discover all supermarket flyers
         run: python tools/publish_catalogs.py --output public/catalog --previous https://chatgptplusitausers-lab.github.io/offerte-infernetto-catalog/catalog
       - name: Validate catalog index

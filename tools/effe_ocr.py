@@ -5,8 +5,9 @@ import cv2
 import numpy as np
 from PIL import Image, ImageOps
 from flyer_sources import get
+from effe_layouts import reviewed
 
-VERSION='text-regions-v6'
+VERSION='caption-regions-v9'
 
 def sections(im):
     a=np.asarray(im.convert('RGB'))
@@ -36,9 +37,10 @@ def circles(im):
         if 65<=w<=160 and 65<=h<=160 and .72<w/h<1.4 and area/(w*h)>.70 and perimeter and 4*np.pi*area/(perimeter*perimeter)>.5:boxes.append((x,y,w,h))
     return boxes
 
-def recognize(im,rect,work,name,psm=6):
+def recognize(im,rect,work,name,psm=6,threshold=None):
     x,y,w,h=rect;scale_x,scale_y=6,4;pad=24
     crop=im.crop((x,y,x+w,y+h)).resize((w*scale_x,h*scale_y),Image.Resampling.LANCZOS)
+    if threshold is not None:crop=crop.convert('L').point(lambda v:255 if v>threshold else 0).convert('RGB')
     path=work/(name+'.png');ImageOps.expand(crop,border=pad,fill='white').save(path)
     env=os.environ.copy();env['OMP_THREAD_LIMIT']='1'
     result=subprocess.run([os.environ.get('TESSERACT_CMD','tesseract'),str(path),'stdout','-l','ita','--psm',str(psm),'tsv'],capture_output=True,text=True,encoding='utf-8',check=True,timeout=30,env=env)
@@ -49,6 +51,8 @@ def recognize(im,rect,work,name,psm=6):
         words.append({'t':r['text'],'confidence':float(r['conf']),
             'x':x+max(0,(int(r['left'])-pad)/scale_x),'y':y+max(0,(int(r['top'])-pad)/scale_y),
             'w':int(r['width'])/scale_x,'h':int(r['height'])/scale_y})
+    if not words and threshold is None:
+        return recognize(im,rect,work,name+'-threshold',psm,120)
     return words
 
 def rectangle(words,width,height):
@@ -69,7 +73,7 @@ def read_page(im,page,work):
         raw_price=' '.join(q['t'] for q in pwds)
         matches=re.findall(r'(?<!\d)(\d{1,3})\s*[,\.]\s*(\d{2})(?!\d)',raw_price)
         price=float(matches[-1][0]+'.'+matches[-1][1]) if matches else None
-        if price is None or not 0<price<1000:continue
+        if price is not None and not 0<price<1000:price=None
         nh=min(65,max(36,int(h*.23)))
         name_rect=(x,y+h-nh,max(30,w-pw),nh)
         if circle:name_rect=(x+int(w*.1),y+int(h*.1),int(w*.8),int(h*.52))
@@ -84,15 +88,47 @@ def read_page(im,page,work):
         name=re.sub(r"\bL['’]?ETTO\b",'',name,flags=re.I).strip()
         if len(name)<5:continue
         bbox=rectangle(labels,im.width,im.height)
-        price_box=rectangle(pwds,im.width,im.height)
+        price_box=rectangle(pwds,im.width,im.height) if pwds else None
         identity=f'{page}|{x}|{y}|{name}|{price}'
         products.append(dict(id=hashlib.sha256(identity.encode()).hexdigest()[:18],market='Effe Gros',name=name,
           price=price,brand='',format="l'etto" if any('ETTO' in q['t'] for q in labels) else '',page=page,
-          bbox=bbox,textBoxes=[bbox,price_box],bboxSpace='normalized',hotspotType='text',
+          bbox=bbox,textBoxes=[bbox],priceBox=price_box,bboxSpace='normalized',hotspotType='text',
           mappingVerified=True,mappingConfidence=1,sourceWidth=im.width,sourceHeight=im.height,
           ocrConfidence=round(sum(q['confidence'] for q in labels)/len(labels),1),
           category='Altro',rating='NORMALE',ranking=999,pageIndex=len(products)+1,
           note='Testo letto dal volantino. Tocca il testo o il prezzo stampato per selezionarlo.'))
+    return products
+
+def read_reviewed(im,page,url,work):
+    regions=reviewed(page,url)
+    if regions is None:return read_page(im,page,work)
+    products=[]
+    def box(rect):
+        x,y,w,h=rect
+        return dict(x=round(x/im.width,6),y=round(y/im.height,6),w=round(w/im.width,6),h=round(h/im.height,6))
+    for ix,r in enumerate(regions):
+        words=recognize(im,r['caption'],work,f'{page}-{ix}-caption')
+        name=r.get('name') or ' '.join(q['t'] for q in words).strip()
+        name=re.sub(r'\s+',' ',name)
+        if not name:name=f'Articolo pagina {page}, riquadro {ix+1}'
+        price=r.get('price');pr=r.get('priceBox')
+        # This edition's compressed price font confuses 9 with 8/6. Only
+        # visually confirmed prices are exported; captions remain selectable.
+        caption=rectangle(words,im.width,im.height) if words else box(r['caption'])
+        # Manual descriptions retain the full printed region, including letters
+        # the OCR did not read. Neither price confidence nor OCR confidence can
+        # discard an independently verified product caption.
+        if r.get('name'):caption=box(r['caption'])
+        p=dict(id=hashlib.sha256(f'{url}|caption|{ix}'.encode()).hexdigest()[:18],market='Effe Gros',name=name,
+            price=price,priceRead=price is not None,brand='',format=r.get('format',''),page=page,pageIndex=ix+1,
+            category='Altro',rating='NORMALE',ranking=999,bbox=caption,textBoxes=[caption],
+            captionCrop=box(r['caption']),priceBox=box(pr) if pr else None,
+            bboxSpace='normalized',hotspotType='text',mappingVerified=True,mappingConfidence=1,
+            sourceWidth=im.width,sourceHeight=im.height,regionReview='visual',
+            note='Selezione della descrizione stampata. Il prezzo non determina la presenza del prodotto.')
+        for k in ['validFrom','validTo']:
+            if r.get(k):p[k]=r[k]
+        products.append(p)
     return products
 
 def enrich(data,cache=None):
@@ -102,9 +138,12 @@ def enrich(data,cache=None):
         i,url=pair;key=hashlib.sha256((VERSION+'|'+url).encode()).hexdigest();saved=cache/(key+'.json')
         if saved.exists():return json.loads(saved.read_text(encoding='utf-8'))
         image=cache/(key+'.jpg')
-        if not image.exists():image.write_bytes(get(url,True))
+        if not image.exists():
+            local=Path(os.environ.get('OCR_PAGE_DIR',''))/f'page-{i+1:02}.jpg'
+            if os.environ.get('OCR_PAGE_DIR') and local.exists():image.write_bytes(local.read_bytes())
+            else:image.write_bytes(get(url,True))
         with Image.open(image) as im,tempfile.TemporaryDirectory() as tmp:
-            rows=read_page(im.convert('RGB'),i+1,Path(tmp))
+            rows=read_reviewed(im.convert('RGB'),i+1,url,Path(tmp))
         saved.write_text(json.dumps(rows,ensure_ascii=False),encoding='utf-8')
         print(f'OCR pagina {i+1}: {len(rows)} prodotti',flush=True)
         return rows

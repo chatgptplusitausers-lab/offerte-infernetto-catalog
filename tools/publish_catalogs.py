@@ -41,9 +41,9 @@ def collect(output, previous=None):
                     if cached.get('market')==market and cached.get('schemaVersion')==2 and cached.get('pages'):
                         data=cached;status='cached'
                         seed=Path(__file__).parent/'seeds'/'effegros.json'
-                        if market=='Effe Gros' and not data.get('products') and seed.exists():
+                        if market=='Effe Gros' and seed.exists():
                             known=json.loads(seed.read_text(encoding='utf-8'))
-                            if known.get('id')==data.get('id') and known.get('pages')==data.get('pages'):
+                            if known.get('id')==data.get('id') and known.get('pages')==data.get('pages') and known.get('ocrVersion')!=data.get('ocrVersion'):
                                 data=known
                         # The store can remove its landing-page link before the
                         # printed expiry date. Recover text from the exact saved
