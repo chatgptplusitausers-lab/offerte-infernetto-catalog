@@ -15,14 +15,23 @@ def collect(output, previous=None):
         try:
             data=fn()
             if market=='Effe Gros':
-                from effe_ocr import enrich, VERSION
-                cached=None
-                if previous:
-                    try:cached=json.loads(get(previous.rstrip('/')+'/latest-'+slug+'.json'))
-                    except (OSError,ValueError):pass
-                if cached and cached.get('id')==data['id'] and cached.get('ocrVersion')==VERSION and cached.get('products'):
-                    for field in ['products','offerCount','ocrVersion','ocrPages']:data[field]=cached.get(field)
-                else:data=enrich(data)
+                # Product extraction is optional: never discard a newly discovered
+                # flyer or attach products from a different edition when OCR fails.
+                import copy
+                flyer=copy.deepcopy(data)
+                try:
+                    from effe_ocr import enrich, VERSION
+                    cached=None
+                    if previous:
+                        try:cached=json.loads(get(previous.rstrip('/')+'/latest-'+slug+'.json'))
+                        except (OSError,ValueError):pass
+                    if cached and cached.get('id')==data['id'] and cached.get('pages')==data['pages'] and cached.get('ocrVersion')==VERSION and cached.get('products'):
+                        for field in ['products','offerCount','ocrVersion','ocrPages']:data[field]=cached.get(field)
+                    else:data=enrich(data)
+                except Exception as exc:
+                    data=flyer
+                    data.update(products=[],offerCount=0,ocrStatus='unavailable',ocrError=str(exc))
+                    return market,slug,data,'Estrazione prodotti non disponibile: '+str(exc)
             return market,slug,data,None
         except Exception as e:return market,slug,None,str(e)
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
@@ -31,6 +40,7 @@ def collect(output, previous=None):
         status='ok'
         if data:
             successful+=1
+            if error:warnings.append(f'{market}: {error}')
             data.update(schemaVersion=2,checkedAt=stamp,sourceId=data['id'],staleProducts=not bool(data['products']))
         else:
             warnings.append(f'{market}: {error}')

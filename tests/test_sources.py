@@ -3,6 +3,7 @@ import json
 import sys
 import tempfile
 import unittest
+import types
 from pathlib import Path
 from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
@@ -38,5 +39,23 @@ class Sources(unittest.TestCase):
         def fail():raise OSError('timeout')
         with tempfile.TemporaryDirectory() as tmp,patch.dict(pub.MARKETS,{'Lidl':('lidl',fail)},clear=True):
             with self.assertRaises(RuntimeError):pub.collect(Path(tmp))
+
+    def test_ocr_failure_keeps_new_flyer_without_old_products(self):
+        current=f.edition('Effe Gros','https://example.com/new',['https://www.cedigros.com/new.jpg'],dt.date(2026,11,13),dt.date(2026,11,23),[],'fixture')
+        old={**current,'id':'old','pages':['https://www.cedigros.com/old.jpg'],'products':[{'name':'Old offer'}]}
+        def fail(data):
+            data['products']=[{'name':'Partial OCR result'}]
+            raise ValueError('OCR non ha estratto prodotti')
+        ocr=types.SimpleNamespace(VERSION='test',enrich=fail)
+        with tempfile.TemporaryDirectory() as tmp,patch.dict(pub.MARKETS,{'Effe Gros':('effegros',lambda:current)},clear=True),patch.dict(sys.modules,{'effe_ocr':ocr}),patch.object(pub,'get',return_value=json.dumps(old)):
+            result=pub.collect(Path(tmp),'https://example.com/catalog')
+            saved=json.loads((Path(tmp)/'latest-effegros.json').read_text())
+            self.assertEqual(result['markets']['Effe Gros']['status'],'ok')
+            self.assertIn('Estrazione prodotti',result['markets']['Effe Gros']['error'])
+            self.assertEqual(saved['validFrom'],'2026-11-13')
+            self.assertEqual(saved['pages'],current['pages'])
+            self.assertEqual(saved['products'],[])
+            self.assertTrue(saved['staleProducts'])
+            self.assertEqual(saved['ocrStatus'],'unavailable')
 
 if __name__=='__main__':unittest.main()
