@@ -7,7 +7,7 @@ from PIL import Image, ImageOps
 from flyer_sources import get
 from effe_layouts import reviewed
 
-VERSION='caption-regions-v10'
+VERSION='caption-regions-v11'
 
 def sections(im):
     a=np.asarray(im.convert('RGB'))
@@ -88,7 +88,7 @@ def read_page(im,page,work):
         price_box=rectangle(pwds,im.width,im.height) if pwds else None
         identity=f'{page}|{x}|{y}|{name}|{price}'
         products.append(dict(id=hashlib.sha256(identity.encode()).hexdigest()[:18],market='Effe Gros',name=name,
-          price=price,brand='',format="l'etto" if any('ETTO' in q['t'] for q in labels) else '',page=page,
+          price=price,priceRead=price is not None,hitBox=dict(x=x/im.width,y=y/im.height,w=w/im.width,h=h/im.height),brand='',format="l'etto" if any('ETTO' in q['t'] for q in labels) else '',page=page,
           bbox=bbox,textBoxes=[bbox],priceBox=price_box,bboxSpace='normalized',hotspotType='text',
           mappingVerified=True,mappingConfidence=1,sourceWidth=im.width,sourceHeight=im.height,
           ocrConfidence=round(sum(q['confidence'] for q in labels)/len(labels),1),

@@ -33,6 +33,11 @@ def collect(output, previous=None):
                     data=flyer
                     data.update(products=[],offerCount=0,ocrStatus='unavailable',ocrError=str(exc))
                     return market,slug,data,'Estrazione prodotti non disponibile: '+str(exc)
+            if market!='Effe Gros':
+                try:
+                    from product_mapping import enrich_mapping
+                    data=enrich_mapping(data)
+                except Exception as exc:data['mappingError']=str(exc)
             return market,slug,data,None
         except Exception as e:return market,slug,None,str(e)
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:

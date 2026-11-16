@@ -20,17 +20,17 @@ PERIOD = re.compile(r"\b(?:dal|dall['’])\s*(\d{1,2})(?:\s+("+MONTH+r"))?(?:\s+
 def today():
     return dt.datetime.now(ZoneInfo('Europe/Rome')).date()
 
-def get(url, binary=False):
+def get(url, binary=False, timeout=25, attempts=3):
     last=None
-    for attempt in range(3):
+    for attempt in range(attempts):
         try:
             req=urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0 (compatible; OfferteInfernetto/3.6)'})
-            with urllib.request.urlopen(req,timeout=25) as r:
+            with urllib.request.urlopen(req,timeout=timeout) as r:
                 data=r.read()
             return data if binary else data.decode('utf-8','replace')
         except (OSError, TimeoutError) as exc:
             last=exc
-            if attempt<2: time.sleep(attempt+1)
+            if attempt<attempts-1: time.sleep(attempt+1)
     raise last
 
 def parse_period(text):
