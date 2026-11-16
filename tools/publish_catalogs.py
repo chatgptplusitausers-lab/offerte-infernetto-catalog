@@ -2,6 +2,7 @@
 import argparse, concurrent.futures, datetime as dt, json, os
 from pathlib import Path
 from flyer_sources import discover_effe, discover_nuovo, get, today
+from product_inventory import inventory, app_products
 
 MARKETS={'Effe Gros':('effegros',discover_effe),'Lidl':('lidl',lambda:discover_nuovo('Lidl','lidl')),'Eurospin':('eurospin',lambda:discover_nuovo('Eurospin','eurospin'))}
 
@@ -26,7 +27,7 @@ def collect(output, previous=None):
                         try:cached=json.loads(get(previous.rstrip('/')+'/latest-'+slug+'.json'))
                         except (OSError,ValueError):pass
                     if cached and cached.get('id')==data['id'] and cached.get('pages')==data['pages'] and cached.get('ocrVersion')==VERSION and cached.get('products'):
-                        for field in ['products','offerCount','ocrVersion','ocrPages']:data[field]=cached.get(field)
+                        for field in ['products','offerCount','ocrVersion','ocrPages','inventoryProducts']:data[field]=cached.get(field)
                     else:data=enrich(data)
                 except Exception as exc:
                     data=flyer
@@ -64,6 +65,16 @@ def collect(output, previous=None):
                 except (OSError,ValueError):pass
         record={'status':status,'checkedAt':stamp,'error':error}
         if data:
+            all_products=data.pop('inventoryProducts',None)
+            if all_products is None:all_products=data['products']
+            report=inventory({**data,'products':all_products})
+            inventory_path='inventory-'+slug+'.json'
+            (output/inventory_path).write_text(json.dumps(report,ensure_ascii=False,separators=(',',':')),encoding='utf-8')
+            # Preserve captions without a read price for reuse by the next run.
+            data['inventoryProducts']=all_products
+            data['products']=app_products(data['products'])
+            data['offerCount']=len(data['products'])
+            record.update(inventoryPath=inventory_path,productCount=len(all_products),completeness='unverified',pagesWithoutProducts=report['pagesWithoutProducts'])
             record.update(path='latest-'+slug+'.json',validFrom=data['validFrom'],validTo=data['validTo'],editionId=data['id'])
             data['sourceStatus']=status
             (output/record['path']).write_text(json.dumps(data,ensure_ascii=False,separators=(',',':')),encoding='utf-8')

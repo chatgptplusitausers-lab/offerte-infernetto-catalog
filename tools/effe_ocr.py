@@ -7,7 +7,7 @@ from PIL import Image, ImageOps
 from flyer_sources import get
 from effe_layouts import reviewed
 
-VERSION='caption-regions-v9'
+VERSION='caption-regions-v10'
 
 def sections(im):
     a=np.asarray(im.convert('RGB'))
@@ -15,13 +15,8 @@ def sections(im):
     h=cv2.morphologyEx(red,cv2.MORPH_OPEN,np.ones((1,max(40,im.width//17)),np.uint8))
     v=cv2.morphologyEx(red,cv2.MORPH_OPEN,np.ones((max(40,im.height//18),1),np.uint8))
     barriers=cv2.dilate(h|v,np.ones((3,3),np.uint8))
-    # Reconnect thin rules interrupted by JPEG compression. Their long spans
-    # distinguish printed section boundaries from lettering and photographs.
-    cols=np.where((v>0).sum(axis=0)>im.height*.55)[0]
-    rows=np.where((h>0).sum(axis=1)>im.width*.65)[0]
-    if len(cols)>10 and len(rows)>10:
-        for x in cols:barriers[rows.min():rows.max()+1,x]=255
-        for y in rows:barriers[y,cols.min():cols.max()+1]=255
+    # Keep real printed boundaries: extending a short rule across the page
+    # splits larger offers and cuts their captions off.
     _,_,stats,_=cv2.connectedComponentsWithStats(255-barriers)
     return sorted([(int(x),int(y),int(w),int(h)) for x,y,w,h,area in stats[1:] if w>70 and h>65 and area>5000 and area/(w*h)>.85 and w<im.width*.96],key=lambda r:(r[1]//10,r[0]))
 
@@ -43,7 +38,9 @@ def recognize(im,rect,work,name,psm=6,threshold=None):
     if threshold is not None:crop=crop.convert('L').point(lambda v:255 if v>threshold else 0).convert('RGB')
     path=work/(name+'.png');ImageOps.expand(crop,border=pad,fill='white').save(path)
     env=os.environ.copy();env['OMP_THREAD_LIMIT']='1'
-    result=subprocess.run([os.environ.get('TESSERACT_CMD','tesseract'),str(path),'stdout','-l','ita','--psm',str(psm),'tsv'],capture_output=True,text=True,encoding='utf-8',check=True,timeout=30,env=env)
+    result=subprocess.run([os.environ.get('TESSERACT_CMD','tesseract'),str(path),'stdout','-l','ita','--psm',str(psm),'-c','tessedit_create_tsv=1'],capture_output=True,text=True,encoding='utf-8',check=True,timeout=30,env=env)
+    if not result.stdout.startswith('level\t'):
+        raise ValueError('Tesseract non ha restituito coordinate TSV valide')
     words=[]
     for r in csv.DictReader(result.stdout.splitlines(),delimiter='\t'):
         if r.get('level')!='5' or not r.get('text','').strip():continue
@@ -150,7 +147,7 @@ def enrich(data,cache=None):
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
         pages=list(pool.map(one,enumerate(data['pages'])))
     products=[p for rows in pages for p in rows]
-    if not products:raise ValueError('OCR non ha estratto prodotti: catalogo precedente conservato')
+    if not products:raise ValueError('OCR non ha estratto prodotti')
     for p in products:p['validity']=data['period']
     data.update(products=products,offerCount=len(products),ocrVersion=VERSION,ocrPages=len([p for p in pages if p]),staleProducts=False)
     return data
