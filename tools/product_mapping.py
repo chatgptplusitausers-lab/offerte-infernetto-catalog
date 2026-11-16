@@ -45,7 +45,8 @@ def enrich_mapping(data,cache=None):
             try:
                 if path.exists():box=json.loads(path.read_text())
                 else:
-                    box=locate(page,image(p['image']))
+                    crop=image(p['image'])
+                    box=locate(page,crop) or locate_template(page,crop)
                     if box:path.write_text(json.dumps(box))
                 if box:p.update(bbox=box,bboxSpace='normalized',sourceWidth=page.shape[1],sourceHeight=page.shape[0],mappingVerified=True,mappingMethod=VERSION)
             except (OSError,ValueError,cv2.error):continue
@@ -53,3 +54,19 @@ def enrich_mapping(data,cache=None):
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:list(ex.map(page_work,enumerate(data['pages'])))
     data['mappingVersion']=VERSION;data['mappedProductCount']=sum(bool(p.get('bbox')) for p in data['products'])
     return data
+
+def locate_template(page,crop):
+    # Secondary check for low-texture crops where feature homography is unstable.
+    ph,pw=page.shape;ch,cw=crop.shape;scale=min(1,1000/ph)
+    pg=cv2.resize(page,None,fx=scale,fy=scale);best=None
+    for factor in np.arange(.7,1.31,.01):
+        w,h=round(cw*factor*scale),round(ch*factor*scale)
+        if min(w,h)<20 or w>pg.shape[1] or h>pg.shape[0]:continue
+        cc=cv2.resize(crop,(w,h));scores=cv2.matchTemplate(pg,cc,cv2.TM_CCOEFF_NORMED)
+        _,score,_,(x,y)=cv2.minMaxLoc(scores)
+        if score<.93 or best and score<=best[0]:continue
+        scores[max(0,y-h//2):min(scores.shape[0],y+h//2+1),max(0,x-w//2):min(scores.shape[1],x+w//2+1)]=-1
+        second=cv2.minMaxLoc(scores)[1]
+        if score-second<.08:continue
+        best=(score,dict(x=x/scale/pw,y=y/scale/ph,w=w/scale/pw,h=h/scale/ph))
+    return best[1] if best else None
